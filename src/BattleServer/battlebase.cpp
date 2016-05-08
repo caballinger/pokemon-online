@@ -857,6 +857,7 @@ void BattleBase::playerForfeit(int forfeiterId)
     }
 
     forfeiter() = spot(forfeiterId);
+    stopClock(opponent(forfeiter()));
     //Already done by the server itself
     /*notify(All, BattleEnd, opponent(forfeiter()), qint8(Forfeit));*/
     callp(BP::battleEnded);
@@ -1463,15 +1464,6 @@ void BattleBase::BasicPokeInfo::init(const PokeBattle &p, Pokemon::gen gen)
     level = p.level();
     substituteLife = 0;
     lastMoveUsed = 0;
-
-    if (gen <= 1) {
-        if (p.status() == Pokemon::Paralysed) {
-            stats[Speed] /= 4;
-        } else if (p.status() == Pokemon::Burnt) {
-            /* Burn reduction is at attack time */
-            //stats[Attack] /= 2;
-        }
-    }
 }
 
 void BattleBase::BasicMoveInfo::reset()
@@ -2054,28 +2046,47 @@ int BattleBase::repeatNum(int player)
 
 void BattleBase::testCritical(int player, int target)
 {
-    (void) target;
-
-    /* In RBY, Focus Energy reduces crit by 75%; in statium, it's * 4 */
-    int up (1), down(1);
-    if (tmove(player).critRaise & 1) {
-        up *= 8;
-    }
-    if (tmove(player).critRaise & 2) {
-        if (gen() == Gen::RedBlue || gen() == Gen::Yellow) {
-            down = 4;
-        } else {
-            up *= 4;
-        }
-    }
-    PokeFraction critChance(up, down);
-    int randnum = randint(512);
     int baseSpeed = PokemonInfo::BaseStats(fpoke(player).id, gen()).baseSpeed();
     //Transformed Pokemon use the original form's base speed.
     if (pokeMemory(slot(player)).contains("PreTransformPoke")) {
         baseSpeed = PokemonInfo::BaseStats(PokemonInfo::Number(pokeMemory(slot(player)).value("PreTransformPoke").toString()), gen()).baseSpeed();;
     }
-    bool critical = randnum < std::min(510, baseSpeed * critChance);
+
+    bool critical = false;
+    (void) target;
+
+    if (!isStadium()) {
+        // In RBY, Focus Energy reduces crit by 75%
+        int up (1), down(1);
+        if (tmove(player).critRaise & 1) {
+            up *= 8;
+        }
+        if (tmove(player).critRaise & 2) {
+            if (gen() == Gen::RedBlue || gen() == Gen::Yellow) {
+                down = 4;
+            } else {
+                up *= 4;
+            }
+        }
+
+        PokeFraction critChance(up, down);
+        int randnum = randint(512);
+        critical = randnum < std::min(510, baseSpeed * critChance);
+    }
+    else {
+        int ch = (baseSpeed + 76) >> 2;
+
+        if (tmove(player).critRaise & 2) // Focus Energy
+            ch = (ch << 2) + 160;
+        else ch = ch << 1;
+
+        if (tmove(player).critRaise & 1) // Move with high crit ratio
+            ch = ch << 2;
+        else ch = ch >> 1;
+
+        int randnum = randint(256); // randint [0; 255]
+        critical = randnum < std::min(255, ch); // highest possible crit chance is 255/256
+    }
 
     if (critical) {
         turnMem(player).add(TM::CriticalHit);

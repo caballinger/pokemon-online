@@ -921,6 +921,21 @@ void ScriptEngine::changeTier(int id, int team, const QString &tier)
     }
 }
 
+void ScriptEngine::changeGen(int id, int team, int gen, int subgen)
+{
+    if (testPlayer("changeGen", id) && testTeamCount("changeGen", id, team)) {
+        Pokemon::gen newGen(gen, subgen);
+        if (!newGen.isValid()) {
+            warn("changeGen(id, team, gen, subgen)", "invalid gen", true);
+        } else {
+            myserver->player(id)->team(team).gen = newGen;
+            for (int i = 0; i < 6; i++) {
+                myserver->player(id)->team(team).poke(i) = PokeBattle();
+            }
+        }
+    }
+}
+
 void ScriptEngine::reloadTiers()
 {
     TierMachine::obj()->load();
@@ -939,9 +954,21 @@ void ScriptEngine::changePokeNum(int id, int team, int slot, int num)
 {
     if (!testPlayer("changePokeNum", id) || !testRange("changePokeNum", slot, 0, 5) || !testTeamCount("changePokeNum", id, team))
         return;
-    if (!PokemonInfo::Exists(num, myserver->player(id)->gen(team)))
+
+    Player *p = myserver->player(id);
+    if (!PokemonInfo::Exists(num, p->gen(team)))
         return;
-    myserver->player(id)->team(team).poke(slot).num() = num;
+
+    p->team(team).poke(slot).num() = num;
+    p->team(team).poke(slot).updateStats(p->gen(team));
+    p->team(team).poke(slot).illegal() = true;
+    if (p->team(team).poke(slot).num() != 0) {
+        for (int m = 0; m < 4; m++) {
+            if (p->team(team).poke(slot).move(m) != Move::NoMove) {
+                p->team(team).poke(slot).illegal() = false;
+            }
+        }
+    }
 }
 
 void ScriptEngine::changePokeLevel(int id, int team, int slot, int level)
@@ -962,6 +989,14 @@ void ScriptEngine::changePokeMove(int id, int team, int pslot, int mslot, int mo
     Player *p = myserver->player(id);
     p->team(team).poke(pslot).move(mslot).num() = move;
     p->team(team).poke(pslot).move(mslot).load(p->gen(team));
+    p->team(team).poke(pslot).illegal() = true;
+    if (p->team(team).poke(pslot).num() != 0) {
+        for (int m = 0; m < 4; m++) {
+            if (p->team(team).poke(pslot).move(m) != Move::NoMove) {
+                p->team(team).poke(pslot).illegal() = false;
+            }
+        }
+    }
 }
 
 void ScriptEngine::changePokeGender(int id, int team, int pokeslot, int gender)
@@ -1555,6 +1590,15 @@ QScriptValue ScriptEngine::ratedBattles(int id, int team)
     return ratedBattles(p->name(), p->team(team).tier);
 }
 
+QScriptValue ScriptEngine::ratedWins(int id, int team)
+{
+    if (!testPlayer("ratedWins(id, team)", id) || !testTeamCount("ratedWins(id, team)", id, team)) {
+        return myengine.undefinedValue();
+    }
+    Player *p = myserver->player(id);
+    return ratedWins(p->name(), p->team(team).tier);
+}
+
 QScriptValue ScriptEngine::ranking(const QString &name, const QString &tier)
 {
     if (!TierMachine::obj()->existsPlayer(tier, name)) {
@@ -1569,6 +1613,14 @@ QScriptValue ScriptEngine::ratedBattles(const QString &name, const QString &tier
         return 0;
     }
     return TierMachine::obj()->tier(tier).ratedBattles(name);
+}
+
+QScriptValue ScriptEngine::ratedWins(const QString &name, const QString &tier)
+{
+    if (!TierMachine::obj()->existsPlayer(tier, name)) {
+        return 0;
+    }
+    return TierMachine::obj()->tier(tier).ratedWins(name);
 }
 
 QScriptValue ScriptEngine::totalPlayersByTier(const QString &tier)
@@ -2261,7 +2313,9 @@ void ScriptEngine::changeTeamPokeDV(int id, int team, int slot, int stat, int ne
         && testTeamCount("changeTeamPokeDV(id, team, slot, stat, newValue)", id, team)
         && (slot >=0 && slot <=5 && stat >=0 && stat <= 5 && newValue >= 0 && newValue <= 31)) {
         // TODO: testRange
-        myserver->player(id)->team(team).poke(slot).dvs()[stat] = newValue;
+        Player *p = myserver->player(id);
+        p->team(team).poke(slot).dvs()[stat] = newValue;
+        p->team(team).poke(slot).updateStats(p->gen(team));
     }
 }
 
@@ -2277,8 +2331,10 @@ void ScriptEngine::changeTeamPokeEV(int id, int team, int slot, int stat, int ne
             else
                 total += myserver->player(id)->team(team).poke(slot).evs()[i];
         }
-        if (total <= 510) */
-        myserver->player(id)->team(team).poke(slot).evs()[stat] = newValue;
+        if (total <= 510) */        
+        Player *p = myserver->player(id);
+        p->team(team).poke(slot).evs()[stat] = newValue;
+        p->team(team).poke(slot).updateStats(p->gen(team));
     }
 }
 
@@ -2855,7 +2911,9 @@ void ScriptEngine::changePokeNature(int id, int team, int slot, int nature)
             || !testTeamCount("changePokeNature(id, team, slot, nature)", id, team))
         return;
     // Ugly, we don't have NatureInfo::Exists(nature) or we do?
-    myserver->player(id)->team(team).poke(slot).nature() = nature;
+    Player *p = myserver->player(id);
+    p->team(team).poke(slot).nature() = nature;
+    p->team(team).poke(slot).updateStats(p->gen(team));
 }
 
 QScriptValue ScriptEngine::teamPokeGender(int id, int team, int slot)
@@ -3837,6 +3895,30 @@ int ScriptEngine::subGenerationOfTier(const QString &tier) {
     }
     warn("subGenerationOfTier(tier)", "not a valid tier", true);
     return -1;
+}
+
+int ScriptEngine::maxLevelOfTier(const QString &tier) {
+    if (TierMachine::obj()->exists(tier)) {
+        return TierMachine::obj()->tier(tier).getMaxLevel();
+    }
+    warn("maxLevelOfTier(tier)", "not a valid tier", true);
+    return -1;
+}
+
+int ScriptEngine::modeOfTier(const QString &tier) {
+    if (TierMachine::obj()->exists(tier)) {
+        return TierMachine::obj()->tier(tier).getMode();
+    }
+    warn("modeOfTier(tier)", "not a valid tier", true);
+    return -1;
+}
+
+bool ScriptEngine::allowsIllegal(const QString &tier) {
+    if (TierMachine::obj()->exists(tier)) {
+        return TierMachine::obj()->tier(tier).allowIllegal == "true";
+    }
+    warn("allowsIllegal(tier)", "not a valid tier", true);
+    return false;
 }
 
 QScriptValue ScriptEngine::enableStrict(QScriptContext *, QScriptEngine *e)

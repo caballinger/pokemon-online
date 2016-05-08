@@ -392,6 +392,8 @@ struct AMDrySkin : public AM {
             if (b.canHeal(s, BS::HealByAbility,b.ability(s))) {
                 b.sendAbMessage(15,0,s,s,Pokemon::Water);
                 b.healLife(s, b.poke(s).totalLifePoints()/4);
+            } else {
+                b.sendAbMessage(15,2,s,s,Pokemon::Water); //if at full HP
             }
         }
     }
@@ -2118,10 +2120,24 @@ struct AMPickUp : public AM {
 struct AMUnnerve : public AM {
     AMUnnerve() {
         functions["UponSetup"] = &us;
+        functions["OnLoss"] = &ol;
+        functions["UponSwitchOut"] = &ol;
     }
 
     static void us(int s, int, BS &b) {
         b.sendAbMessage(102,0,s);
+    }
+
+    static void ol(int s, int, BS &b) {
+        if (!b.hasWorkingTeamAbility(s, Ability::Unnerve, b.slot(s))) {
+            QList<int> tars = b.revs(s);
+            foreach (int p, tars) {
+                int item = b.poke(p).item();
+                if (ItemInfo::isBerry(item)) {
+                    ItemEffect::activate("UponReactivation", item, p, p, b);
+                }
+            }
+        }
     }
 };
 
@@ -2129,6 +2145,7 @@ struct AMAerilate : public AM {
     AMAerilate() {
         functions["BeforeTargetList"] = &baf;
         functions["BasePowerModifier"] = &bpm;
+        functions["MoveSettings"] = &baf;
     }
 
     static void baf(int s, int, BS &b) {

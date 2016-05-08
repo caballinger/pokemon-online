@@ -353,6 +353,11 @@ void BattleSituation::chainBp(int , int pow)
     bpmodifiers.append(pow);
 }
 
+void BattleSituation::clearBp()
+{
+    bpmodifiers.clear();
+}
+
 void BattleSituation::endTurn()
 {
     testWin();
@@ -498,18 +503,10 @@ void BattleSituation::endTurn()
 
 void BattleSituation::endTurnDefrost()
 {
-    // RBY freeze is forever unless hit by fire moves.
-    // We think both stadium and cart have permafreeze.
-    if (gen().num == 1) {
-        return;
-    }
-    foreach(int player, speedsVector) {
-        if (poke(player).status() == Pokemon::Frozen)
-        {
-            if (coinflip(26, 255))
-            {
-                unthaw(player);
-            }
+    // Only gen 2 as it is supposed to get called at a different time
+    foreach (int player, speedsVector) {
+        if (poke(player).status() == Pokemon::Frozen && coinflip(26, 255)) {
+            unthaw(player);
         }
     }
 }
@@ -566,22 +563,20 @@ void BattleSituation::endTurnPoison(int player)
     if (koed(player)|| poke(player).status() != Pokemon::Poisoned)
         return;
 
-    //PoisonHeal
+    // PoisonHeal
     if (hasWorkingAbility(player, Ability::PoisonHeal)) {
         if (canHeal(player,HealByAbility,ability(player))) {
             sendAbMessage(45,0,player,0,Pokemon::Poison);
             healLife(player, poke(player).totalLifePoints()/8);
         }
-    } else {
-        if (!hasWorkingAbility(player, Ability::MagicGuard)) {
-            notify(All, StatusMessage, player, qint8(HurtPoison));
+    } else if (!hasWorkingAbility(player, Ability::MagicGuard)) {
+        notify(All, StatusMessage, player, qint8(HurtPoison));
 
-            if (poke(player).statusCount() == 0)
-                inflictDamage(player, poke(player).totalLifePoints()/ (gen().num == 1 ? 16 : 8), player); // 1/16 in gen 1
-            else {
-                inflictDamage(player, poke(player).totalLifePoints() * (16-poke(player).statusCount()) / 16, player);
-                //poke(player).statusCount() = std::max(1, poke(player).statusCount() - 1); //Already being applied earlier.
-            }
+        if (poke(player).statusCount() == 0) {
+            inflictDamage(player, poke(player).totalLifePoints() / 8, player);
+        } else {
+            inflictDamage(player, poke(player).totalLifePoints() * (16 - poke(player).statusCount()) / 16, player);
+            //poke(player).statusCount() = std::max(1, poke(player).statusCount() - 1); //Already being applied earlier.
         }
     }
     /* Toxic still increases under magic guard, poison heal */
@@ -599,7 +594,7 @@ void BattleSituation::endTurnBurn(int player)
 
     notify(All, StatusMessage, player, qint8(HurtBurn));
     //HeatProof: burn does only 1/16, also Gen 1 only does 1/16
-    inflictDamage(player, poke(player).totalLifePoints()/(8*(1+(hasWorkingAbility(player,Ability::Heatproof) || gen().num == 1))), player);
+    inflictDamage(player, poke(player).totalLifePoints() / (8 * (1 + hasWorkingAbility(player, Ability::Heatproof))), player);
 }
 
 BattleChoices BattleSituation::createChoice(int slot)
@@ -803,6 +798,7 @@ void BattleSituation::analyzeChoices()
             switches.push_back(i);
         } else if (choice(i).attackingChoice()){
             if (gen() >= 5) {
+                calleffects(i, i, "PriorityChoice"); //Me First. Needs to go above aeffects
                 callaeffects(i, i, "PriorityChoice");
             }
             priorities[tmove(i).priority].push_back(i);
@@ -1101,20 +1097,16 @@ void BattleSituation::callseffects(int source, int target, const QString &name)
 
 void BattleSituation::callieffects(int source, int target, const QString &name)
 {
-    if (gen() <= 1 || !isOut(source))
-        return;
-    //Klutz
-    if (hasWorkingItem(source, poke(source).item())) {
+    if (isOut(source) && hasWorkingItem(source, poke(source).item())) {
         ItemEffect::activate(name, poke(source).item(), source, target, *this);
     }
 }
 
 void BattleSituation::callaeffects(int source, int target, const QString &name)
 {
-    if (gen() <= 2 || !isOut(source))
-        return;
-    if (hasWorkingAbility(source, ability(source)))
+    if (gen() > 2 && isOut(source) && hasWorkingAbility(source, ability(source))) {
         AbilityEffect::activate(name, ability(source), source, target, *this);
+    }
 }
 
 void BattleSituation::sendBack(int player, bool silent)
@@ -1204,8 +1196,7 @@ bool BattleSituation::testAccuracy(int player, int target, bool silent)
             return true;
     }
 
-    //No Guard. Acc 102 is used for Gen 1 moves that bypass Accuracy check
-    if ((hasWorkingAbility(player, Ability::NoGuard) || hasWorkingAbility(target, Ability::NoGuard)) || (gen().num == 1 && acc == 102)) {
+    if (hasWorkingAbility(player, Ability::NoGuard) || hasWorkingAbility(target, Ability::NoGuard)) {
         return true;
     }
 
@@ -1230,18 +1221,11 @@ bool BattleSituation::testAccuracy(int player, int target, bool silent)
     }
 
     if (MoveInfo::isOHKO(move, gen())) {
-        bool ret = coinflip(unsigned(30 + (gen().num == 1 ? 0 :  poke(player).level() - poke(target).level()) ), 100);
+        bool ret = coinflip(unsigned(30 + poke(player).level() - poke(target).level()), 100);
         if (!ret && !silent) {
             notifyMiss(multiTar, player, target);
         }
         return ret;
-    }
-
-    //Might not be best way, but it works!
-    int micle = 0;
-    if (pokeMemory(player).value("Stat6BerryModifier").toBool()) {
-        pokeMemory(player).remove("Stat6BerryModifier");
-        micle = 4;
     }
 
     turnMemory(player).remove("Stat6ItemModifier");
@@ -1266,8 +1250,9 @@ bool BattleSituation::testAccuracy(int player, int target, bool silent)
             * (20+turnMemory(player).value("Stat6AbilityModifier").toInt())/20
             * (20+turnMemory(player).value("Stat6PartnerAbilityModifier").toInt())/20
             * (20-turnMemory(target).value("Stat7AbilityModifier").toInt())/20
-            * (20+micle)/20; //Micle Berry
+            * (20+pokeMemory(player).value("Stat6BerryModifier").toInt())/20;
 
+    pokeMemory(player).remove("Stat6BerryModifier");
     if (coinflip(unsigned(acc), 100)) {
         return true;
     } else {
@@ -1288,56 +1273,37 @@ void BattleSituation::testCritical(int player, int target)
     }
 
     bool critical;
-    if (gen().num == 1) {
-        int baseSpeed = PokemonInfo::BaseStats(fpoke(player).id, gen()).baseSpeed() / 2;
-
-        if (tmove(player).critRaise & 1) {
-            baseSpeed *= 8;
-        }
-        /* In RBY, Focus Energy reduces crit by 75% */
-        if (tmove(player).critRaise & 2) {
-            if (gen() <= Pokemon::gen(Gen::Yellow)) {
-                baseSpeed /=4;
-            } else {
-                baseSpeed *= 4;
-            }
-        }
-        int randnum = randint(256);
-
-        critical = randnum < std::min(255, baseSpeed);
-    } else {
-        /* Flail/Reversal don't inflict crits in gen 2 */
-        if (gen().num == 2 && (tmove(player).attack == Move::Flail || tmove(player).attack == Move::Reversal)) {
-            return;
-        }
-
-        int minch;
-        int craise = tmove(player).critRaise;
-
-        if (hasWorkingAbility(player, Ability::SuperLuck)) { /* Super Luck */
-            craise += 1;
-        }
-
-        if (gen() < 6) {
-            switch(craise) {
-            case 0: minch = 3; break;
-            case 1: minch = 6; break;
-            case 2: minch = 12; break;
-            case 3: minch = 16; break;
-            case 4: case 5: minch = 24; break;
-            case 6: default: minch = 48;
-            }
-        } else {
-            switch(craise) {
-            case 0: minch = 3; break;
-            case 1: minch = 6; break;
-            case 2: minch = 24; break;
-            case 3: default: minch = 48;
-            }
-        }
-
-        critical = coinflip(minch, 48);
+    /* Flail/Reversal don't inflict crits in gen 2 */
+    if (gen().num == 2 && (tmove(player).attack == Move::Flail || tmove(player).attack == Move::Reversal)) {
+        return;
     }
+
+    int minch;
+    int craise = tmove(player).critRaise;
+
+    if (hasWorkingAbility(player, Ability::SuperLuck)) { /* Super Luck */
+        craise += 1;
+    }
+
+    if (gen() < 6) {
+        switch(craise) {
+        case 0: minch = 3; break;
+        case 1: minch = 6; break;
+        case 2: minch = 12; break;
+        case 3: minch = 16; break;
+        case 4: case 5: minch = 24; break;
+        case 6: default: minch = 48;
+        }
+    } else {
+        switch(craise) {
+        case 0: minch = 3; break;
+        case 1: minch = 6; break;
+        case 2: minch = 24; break;
+        case 3: default: minch = 48;
+        }
+    }
+
+    critical = coinflip(minch, 48);
 
     if (critical) {
         turnMem(player).add(TM::CriticalHit);
@@ -1364,7 +1330,7 @@ bool BattleSituation::testStatus(int player)
     }
 
     if (poke(player).status() == Pokemon::Asleep) {
-        if (poke(player).statusCount() > (gen().num == 1 ? 1 : 0)) {
+        if (poke(player).statusCount() > 0) {
             //Early bird
             poke(player).statusCount() -= 1 + hasWorkingAbility(player, Ability::EarlyBird);
             notify(All, StatusMessage, player, qint8(FeelAsleep));
@@ -1374,10 +1340,6 @@ bool BattleSituation::testStatus(int player)
         } else {
             healStatus(player, Pokemon::Asleep);
             notify(All, StatusMessage, player, qint8(FreeAsleep));
-
-            /* In gen 1, pokemon take a full turn to wake up */
-            if (gen().num == 1)
-                return false;
         }
     }
     if (poke(player).status() == Pokemon::Frozen)
@@ -2179,11 +2141,6 @@ void BattleSituation::calculateTypeModStab(int orPlayer, int orTarget)
 
     int typemod = 0;
 
-    // Counter hits regardless of type matchups in Gen 1.
-    if (gen().num == 1 && tmove(player).attack == Move::Counter) {
-        goto end;
-    }
-
     foreach(int type, attackTypes) {
         if (type == Type::Ground && hasFlyingEffect(target) && tmove(player).attack != Move::ThousandArrows) {
             typemod = -100;
@@ -2283,11 +2240,14 @@ bool BattleSituation::hasWorkingAbility(int player, int ab)
     return !pokeMemory(player).value("AbilityNullified").toBool();
 }
 
-bool BattleSituation::hasWorkingTeamAbility(int play, int ability)
+bool BattleSituation::hasWorkingTeamAbility(int play, int ability, int excludedSlot)
 {
     int p = player(play);
     for (int i = 0; i < numberPerSide(); i++) {
         int s = slot(p, i);
+        if (s == excludedSlot) { //Unnerve. Checks if any team mate has the ability still
+            continue;
+        }
         if (!koed(s) && hasWorkingAbility(s, ability)) {
             return true;
         }
@@ -3277,15 +3237,13 @@ int BattleSituation::calculateDamage(int p, int t)
     if (cat == Move::Physical) {
         attack = getStat(p, Attack);
         def = getStat(t, Defense);
+    } else if (attackused == Move::Psyshock || attackused == Move::Psystrike || attackused == Move::SecretSword) {
+        attack = getStat(p, SpAttack);
+        def = getStat(t, Defense);
     } else {
         attack = getStat(p, SpAttack);
-        if(gen().num == 1) {
-            def = getStat(t, SpAttack);
-        } else {
-            def = getStat(t, (attackused == Move::Psyshock || attackused == Move::Psystrike || attackused == Move::SecretSword) ? Defense : SpDefense);
-        }
+        def = getStat(t, SpDefense);
     }
-
 
     /* Used by Pledges to use a special attack, the sum of both */
     if (move.contains("AttackStat")) {
@@ -3305,15 +3263,11 @@ int BattleSituation::calculateDamage(int p, int t)
 
     int stab = turnMem(p).stab;
     int typemod = turnMem(p).typeMod;
-    int randnum;
-    if (gen().num == 1) {
-        randnum = randint(38) + 217;
-    } else {
-        randnum = randint(16) + 85;
-    }
+    int randnum = randint(16) + 85;
     //Spit Up
-    if (attackused == Move::SpitUp) randnum = 100;
-    else if (gen().num == 2 && (attackused == Move::Flail || attackused == Move::Reversal)) randnum = 100;
+    if (attackused == Move::SpitUp && gen().num == 3) {
+        randnum = 100;
+    }
 
     int ch;
     if (gen() <= 5) {
@@ -3405,21 +3359,13 @@ int BattleSituation::calculateDamage(int p, int t)
     }
 
     power = std::min(power, 65535);
-    int damage;
-    if (gen().num == 1) {
-        damage = ((std::min(((level * ch/4 * 2 / 5) + 2) * power, 65535) *
-                   attack / def) / 50) + 2;
-    } else {
-        damage = ((std::min(((level * 2 / 5) + 2) * power, 65535) *
+    int damage = ((std::min(((level * 2 / 5) + 2) * power, 65535) *
                    attack / 50) / def);
-    }
     //Guts, burn
-    if (gen() != 2 || !crit || !turnMemory(p).value("CritIgnoresAll").toBool()) {
-        damage = damage / (
-                    ((poke.status() == Pokemon::Burnt || turnMemory(p).contains("WasBurned")) && cat == Move::Physical && !hasWorkingAbility(p,Ability::Guts)
-                     && !(gen() >= 6 && attackused == Move::Facade))
-                    ? 2 : 1);
-    }
+    damage = damage / (
+                ((poke.status() == Pokemon::Burnt || turnMemory(p).contains("WasBurned")) && cat == Move::Physical && !hasWorkingAbility(p,Ability::Guts)
+                 && !(gen() >= 6 && attackused == Move::Facade))
+                ? 2 : 1);
 
     if (std::abs(terrain) == Type::Fairy && type == Type::Dragon && !isFlying(oppPlayer)) {
         damage /= 2;
@@ -3430,8 +3376,8 @@ int BattleSituation::calculateDamage(int p, int t)
     }
 
     /* Light screen / Reflect */
-    if ( (!crit || (gen().num == 2 && !turnMemory(p).value("CritIgnoresAll").toBool()) ) && !hasWorkingAbility(p, Ability::Infiltrator) &&
-         (teamMemory(this->player(t)).value("Barrier" + QString::number(cat) + "Count").toInt() > 0 || pokeMemory(t).value("Barrier" + QString::number(cat) + "Count").toInt() > 0)) {
+    if (!crit && !hasWorkingAbility(p, Ability::Infiltrator)
+            && teamMemory(this->player(t)).value("Barrier" + QString::number(cat) + "Count").toInt() > 0) {
         if (!multiples()) {
             damage /= 2;
             finalmod /= 2;
@@ -3485,60 +3431,44 @@ int BattleSituation::calculateDamage(int p, int t)
         damage = damage * 3 / 2;
     }
 
-    if (gen().num == 1) { // Gen 1 has no items and crits are already factored in.
-        damage = (damage * stab/2);
-        while (typemod > 0) {
-            damage *= 2;
-            typemod--;
-        }
-        while (typemod < 0) {
-            damage /= 2;
-            typemod++;
-        }
-        damage = (damage * randnum) / 255;
-    } else {
-        damage = (damage+2)*ch/4;
-        move.remove("ItemMod2Modifier");
-        callieffects(p,t,"Mod2Modifier");
-        damage = damage*(10+move["ItemMod2Modifier"].toInt())/10/*Mod2*/;
-        damage = damage *randnum/100*stab/2;
-        finalmod = finalmod*(10+move["ItemMod2Modifier"].toInt())/10;
+    damage = (damage+2)*ch/4;
+    move.remove("ItemMod2Modifier");
+    callieffects(p,t,"Mod2Modifier");
+    damage = damage*(10+move["ItemMod2Modifier"].toInt())/10/*Mod2*/;
+    damage = damage *randnum/100*stab/2;
+    finalmod = finalmod*(10+move["ItemMod2Modifier"].toInt())/10;
 
-        while (typemod > 0) {
-            damage *= 2;
-            typemod--;
-        }
-        while (typemod < 0) {
-            damage /= 2;
-            typemod++;
-        }
+    while (typemod > 0) {
+        damage *= 2;
+        typemod--;
+    }
+    while (typemod < 0) {
+        damage /= 2;
+        typemod++;
+    }
 
-        /* Mod 3 */
-        // FILTER / SOLID ROCK
-        if (turnMem(p).typeMod > 0 && (hasWorkingAbility(t,Ability::Filter) || hasWorkingAbility(t,Ability::SolidRock))) {
-            damage = damage * 3 / 4;
-            finalmod = finalmod * 3 / 4;
-        }
+    /* Mod 3 */
+    // FILTER / SOLID ROCK
+    if (turnMem(p).typeMod > 0 && (hasWorkingAbility(t,Ability::Filter) || hasWorkingAbility(t,Ability::SolidRock))) {
+        damage = damage * 3 / 4;
+        finalmod = finalmod * 3 / 4;
+    }
 
-        /* Expert belt */
-        if (turnMem(p).typeMod > 0 && hasWorkingItem(p, Item::ExpertBelt)) {
-            damage = damage *6/5;
-            finalmod = finalmod *6/5;
-        }
+    /* Expert belt */
+    if (turnMem(p).typeMod > 0 && hasWorkingItem(p, Item::ExpertBelt)) {
+        damage = damage *6/5;
+        finalmod = finalmod *6/5;
+    }
 
-        move.remove("Mod3Berry");
+    move.remove("Mod3Berry");
 
-        /* Berries of the foe */
-        callieffects(t, p, "Mod3Items");
+    /* Berries of the foe */
+    callieffects(t, p, "Mod3Items");
 
-        int berrymod = turnMemory(p).value("Mod3Berry").toInt();
-        if (berrymod != 0) {
-            damage = damage * (10+berrymod)/10;
-            finalmod = finalmod * (10+berrymod)/10;
-        }
-
-        if (gen().num == 2)
-            damage += 1;
+    int berrymod = turnMemory(p).value("Mod3Berry").toInt();
+    if (berrymod != 0) {
+        damage = damage * (10+berrymod)/10;
+        finalmod = finalmod * (10+berrymod)/10;
     }
 
     turnMemory(t)["FinalModifier"] = finalmod;
@@ -4347,8 +4277,6 @@ PokeFraction BattleSituation::getStatBoost(int player, int stat)
                 } else if ((stat == Defense || stat == SpDefense) && boost > 0) {
                     boost = 0;
                 }
-            } else if (gen().num == 1){
-                boost = 0;
             } else if (gen().num == 2 && turnMemory(attacker).value("CritIgnoresAll").toBool()) {
                 boost = 0;
             }
@@ -4498,7 +4426,8 @@ bool BattleSituation::preTransPoke(int s, Pokemon::uniqueId check)
     return false;
 }
 
-bool BattleSituation::canMegaEvolve (int slot) {
+bool BattleSituation::canMegaEvolve (int slot)
+{
     if (megas[player(slot)]) {
         return false;
     }
@@ -4519,4 +4448,17 @@ bool BattleSituation::canMegaEvolve (int slot) {
         return true;
     }
     return false;
+}
+
+int BattleSituation::intendedMoveSlot (int s, int slot, int mv)
+{
+    if (move(s, slot) == mv) {
+        return slot;
+    }
+    for(int i = 0; i < 4; i++) {
+        if (move(s,i) == mv) {
+            return i;
+        }
+    }
+    return slot;
 }

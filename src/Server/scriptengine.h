@@ -216,6 +216,7 @@ public:
     Q_INVOKABLE void changePokePP(int id, int team, int slot, int moveslot, int PP);
 
     Q_INVOKABLE void changeTier(int id, int team, const QString &tier);
+    Q_INVOKABLE void changeGen(int id, int team, int gen, int subgen);
     Q_INVOKABLE void reloadTiers();
     /* Export the SQL databases to old style txt files */
     Q_INVOKABLE void exportMemberDatabase();
@@ -295,8 +296,10 @@ public:
     Q_INVOKABLE bool hasTier(int id, const QString &tier);
     Q_INVOKABLE QScriptValue ranking(int id, int team);
     Q_INVOKABLE QScriptValue ratedBattles(int id, int team);
+    Q_INVOKABLE QScriptValue ratedWins(int id, int team);
     Q_INVOKABLE QScriptValue ranking(const QString &name, const QString &tier);
     Q_INVOKABLE QScriptValue ratedBattles(const QString &name, const QString &tier);
+    Q_INVOKABLE QScriptValue ratedWins(const QString &name, const QString &tier);
     Q_INVOKABLE int maxAuth(const QString &ip);
     Q_INVOKABLE QScriptValue aliases(const QString &ip);
 
@@ -536,6 +539,9 @@ public:
     Q_INVOKABLE int stoneForForme(int pokeid);
     Q_INVOKABLE int generationOfTier(const QString &tier);
     Q_INVOKABLE int subGenerationOfTier(const QString &tier);
+    Q_INVOKABLE int maxLevelOfTier(const QString &tier);
+    Q_INVOKABLE int modeOfTier(const QString &tier);
+    Q_INVOKABLE bool allowsIllegal(const QString &tier);
     inline quint64 getProcessID(const QProcess* proc)
     {
         #ifdef Q_OS_WIN

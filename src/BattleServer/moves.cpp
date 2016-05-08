@@ -710,7 +710,7 @@ struct MMDetect : public MM
             int x = 1 << (std::min(protectCount, 3));
 
             return (b.randint() & (x-1)) == 0;
-        } else {
+        } else if (b.gen() <= 5) {
             int x = 1 << (std::min(protectCount, 8));
 
             if (x >= 256) {
@@ -718,6 +718,9 @@ struct MMDetect : public MM
             } else {
                 return (b.randint() & (x-1)) == 0;
             }
+        } else {            
+            double x = 100.0 / (pow(3.0, std::min(protectCount, 6)));
+            return b.coinflip(x, 100.0);
         }
     }
 
@@ -1704,6 +1707,7 @@ struct MMDoomDesire : public MM
                     b.calculateTypeModStab(s, s);
 
                     int typemod = fturn(b,s).typeMod;
+                    slot(b,s)["DoomDesireTypeMod"] = typemod;
                     if (typemod < -50) {
                         /* If it's ineffective we just say it */
                         b.notify(BS::All, BattleCommands::Effective, s, quint8(0));
@@ -1719,7 +1723,7 @@ struct MMDoomDesire : public MM
                     tmove(b,s).power = MoveInfo::Power(move, b.gen());
 
                     int t = b.opponent(b.player(s));
-                    int doomuser = s;
+                    int doomuser = b.slot(t,0);
 
                     for (int i = 0; i < b.numberPerSide(); i++) {
                         if (b.team(t).internalId(b.poke(t, i)) == slot(b,s).value("DoomDesireId").toInt()) {
@@ -1728,10 +1732,13 @@ struct MMDoomDesire : public MM
                         }
                     }
                     tmove(b, doomuser).recoil = 0;
+                    b.clearBp();
 
+                    slot(b,s)["DoomDesireDamagingNow"] = true;
                     int damage = b.calculateDamage(s, s);
                     b.notify(BS::All, BattleCommands::Effective, s, quint8(typemod > 0 ? 8 : (typemod < 0 ? 2 : 4)));
                     b.inflictDamage(s, damage, doomuser, true, true);
+                    slot(b,s)["DoomDesireDamagingNow"] = false;
                 }
             }
         }
@@ -3835,34 +3842,36 @@ struct MMJumpKick : public MM
     }
 
     static void asf(int s, int t, BS &b) {
-        int damage;
-        if (b.gen() >= 5)
-            damage = b.poke(s).totalLifePoints()/2;
-        else {
-            int typemod;
-            int typeadv[] = {b.getType(t, 1), b.getType(t, 2)};
-            int type = MM::type(b,s);
-            if (typeadv[0] == Type::Ghost) {
-                if (b.gen() <= 3)
-                    return;
-                typemod = b.convertTypeEff(TypeInfo::Eff(type, typeadv[1]));
-            } else if (typeadv[1] == Type::Ghost) {
-                if (b.gen() <= 3)
-                    return;
-                typemod = b.convertTypeEff(TypeInfo::Eff(type, typeadv[0]));
-            } else {
-                typemod = b.convertTypeEff(TypeInfo::Eff(type, typeadv[0])) + b.convertTypeEff(TypeInfo::Eff(type, typeadv[1]));
-            }
+        if (!b.hasWorkingAbility(s, Ability::MagicGuard)) {
+            int damage;
+            if (b.gen() >= 5)
+                damage = b.poke(s).totalLifePoints()/2;
+            else {
+                int typemod;
+                int typeadv[] = {b.getType(t, 1), b.getType(t, 2)};
+                int type = MM::type(b,s);
+                if (typeadv[0] == Type::Ghost) {
+                    if (b.gen() <= 3)
+                        return;
+                    typemod = b.convertTypeEff(TypeInfo::Eff(type, typeadv[1]));
+                } else if (typeadv[1] == Type::Ghost) {
+                    if (b.gen() <= 3)
+                        return;
+                    typemod = b.convertTypeEff(TypeInfo::Eff(type, typeadv[0]));
+                } else {
+                    typemod = b.convertTypeEff(TypeInfo::Eff(type, typeadv[0])) + b.convertTypeEff(TypeInfo::Eff(type, typeadv[1]));
+                }
 
-            fturn(b,s).typeMod = typemod;
-            fturn(b,s).stab = b.hasType(s, Type::Fighting) ? 3 : 2;
-            if (b.gen().num == 4)
-                damage = std::min(b.calculateDamage(s,t)/2, b.poke(t).totalLifePoints()/2);
-            else
-                damage = std::min(b.calculateDamage(s,t)/8, b.poke(t).totalLifePoints()/2);
+                fturn(b,s).typeMod = typemod;
+                fturn(b,s).stab = b.hasType(s, Type::Fighting) ? 3 : 2;
+                if (b.gen().num == 4)
+                    damage = std::min(b.calculateDamage(s,t)/2, b.poke(t).totalLifePoints()/2);
+                else
+                    damage = std::min(b.calculateDamage(s,t)/8, b.poke(t).totalLifePoints()/2);
+            }
+            b.sendMoveMessage(64,0,s,Type::Fighting);
+            b.inflictDamage(s, damage, s, true);
         }
-        b.sendMoveMessage(64,0,s,Type::Fighting);
-        b.inflictDamage(s, damage, s, true);
     }
 };
 
@@ -4358,6 +4367,7 @@ struct MMMeFirst : public MM
         functions["MoveSettings"] = &ms;
         functions["DetermineAttackFailure"] = &daf;
         functions["UponAttackSuccessful"] = &uas;
+        functions["PriorityChoice"] = &ms;
     }
 
     static void ms(int s, int, BS &b) {
@@ -4447,15 +4457,7 @@ struct MMMimic : public MM
                 move = b.move(t, b.randint(4));
             }
         }
-        int slot = fpoke(b,s).lastMoveSlot;
-        //Following check is needed to make sure "Mimic" is replaced, and not other moves, like Sleep Talk.
-        for(int i = 0; i < 4; i++) {
-            if (b.move(s,i) == Move::Mimic) {
-                slot = i;
-                break;
-            }
-        }
-
+        int slot = b.intendedMoveSlot(s, fpoke(b,s).lastMoveSlot, Move::Mimic);
         //Gen 5+ Mimic gives a full PP count. We need to apply the 60% from PP ups
         int pp = b.gen() > 4 ? (MoveInfo::PP(move, b.gen()) * 8/5) : 5;
         b.changeTempMove(s, slot, move, pp);
@@ -4937,7 +4939,7 @@ struct MMSketch : public MM
     static void uas(int s, int t, BS &b) {
         int mv = poke(b,t)["LastMoveUsed"].toInt();
         b.sendMoveMessage(111,0,s,type(b,s),t,mv);
-        int slot = fpoke(b,s).lastMoveSlot;
+        int slot = b.intendedMoveSlot(s, fpoke(b,s).lastMoveSlot, Move::Sketch);
         b.changeDefMove(s, slot, mv);
 
     }

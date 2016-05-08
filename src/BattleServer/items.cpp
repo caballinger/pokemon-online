@@ -395,7 +395,16 @@ struct IMCriticalPoke : public IM
     }
 
     static void btl(int s, int, BS &b) {
-        if (b.pokenum(s).pokenum == poke(b,s)["ItemArg"].toInt()) {
+        int num = b.pokenum(s).pokenum;
+        //Hackmons transforming should retain their boost
+        if (poke(b,s).contains("PreTransformPoke")) {
+            int num2 = PokemonInfo::Number(poke(b,s).value("PreTransformPoke").toString()).pokenum;
+            //But not Ditto!
+            if (num2 != Pokemon::Ditto) {
+                num = num2;
+            }
+        }
+        if (num == poke(b,s)["ItemArg"].toInt()) {
             tmove(b,s).critRaise += 2;
         }
     }
@@ -1075,6 +1084,10 @@ struct IMPrimalOrb : public IM {
     }
     static void us(int s, int, BS &b) {
         if (ItemInfo::MegaStoneForme(b.poke(s).item()).original() == b.poke(s).num()) {
+            //The game is hardcoded to not activate Groudon or Kyogre's natural ability before a mega evolution. It does, however, activate other abilities.
+            if(!(b.poke(s).num() == Pokemon::Groudon && b.poke(s).ability() == Ability::Drought) && !(b.poke(s).num() == Pokemon::Kyogre && b.poke(s).ability() == Ability::Drizzle)) {
+                b.acquireAbility(s, b.poke(s).ability(), true);
+            }
             b.sendItemMessage(67, s);
             b.changeForme(b.player(s), b.slotNum(s), ItemInfo::MegaStoneForme(b.poke(s).item()), false, false, true);
             turn(b,s)["PrimalForme"] = true;

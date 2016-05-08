@@ -563,6 +563,15 @@ struct RBYHyperBeam : public MM
 {
     RBYHyperBeam() {
         functions["UponAttackSuccessful"] = &uas;
+        functions["AttackSomehowFailed"] = &asf;
+    }
+
+    static void asf(int s, int, BS &b) {
+        if (!b.isStadium())
+            return;
+
+        poke(b,s)["Recharging"] = b.turn()+1;
+        addFunction(poke(b,s), "TurnSettings", "HyperBeam", &ts);
     }
 
     static void uas(int s, int t, BS &b) {
@@ -615,6 +624,14 @@ struct RBYLeechSeed : public MM
         if (b.hasType(t, Type::Grass) || b.poke(t).hasStatus(Pokemon::Seeded)) {
             b.failSilently(s);
             b.sendMoveMessage(72, 0, t, Type::Grass);
+            return;
+        }
+
+        //Stadium: Leech Seed misses against subs
+        if (b.isStadium() && b.hasSubstitute(t)) {
+            b.failSilently(s);
+            b.notifyMiss(false, s, t);
+            return;
         }
     }
 
@@ -770,7 +787,10 @@ struct RBYPetalDance : public MM
         inc(poke(b,s)["PetalDanceCount"], -1);
         if (poke(b,s).value("PetalDanceCount").toInt() <= 0) {
             poke(b,s).remove("PetalDanceCount");
-            b.inflictConfused(s, s, true);
+            if (b.isStadium()) {
+                b.sendMoveMessage(93,0,s,type(b,s)); //not sure if the message displays too but why not!
+            }
+            b.inflictConfused(s, s, b.isStadium()); //RBY doesn't tell when confused. This can reveal duration if left alone
         }
     }
 
@@ -900,7 +920,9 @@ struct RBYSubstitute : public MM
             b.sendMoveMessage(128, 0, s,0,s);
             return;
         }
-        if (b.poke(s).lifePoints() < b.poke(s).totalLifePoints()/4) {
+        int currentHP = b.poke(s).lifePoints();
+        int quarterMax = b.poke(s).totalLifePoints() / 4;
+        if ((currentHP < quarterMax) || (b.isStadium() && currentHP <= quarterMax)) {
             b.failSilently(s);
             b.sendMoveMessage(8,0,s);
             return;
@@ -915,6 +937,7 @@ struct RBYSubstitute : public MM
         b.changeHp(s, newHp);
         if (b.koed(s)) {
             b.koPoke(s, s);
+            b.notifyKO(s); //otherwise they wont know!
         } else {
             fpoke(b,s).add(BS::BasicPokeInfo::Substitute);
             fpoke(b,s).substituteLife = b.poke(s).totalLifePoints()/4+1;
@@ -951,6 +974,15 @@ struct RBYTransform : public MM
 {
     RBYTransform() {
         functions["UponAttackSuccessful"] = &uas;
+        functions["DetermineAttackFailure"] = &daf;
+    }
+
+    static void daf(int s, int t, BS &b) {
+        //Can't transform into a transformed pokemon in Stadium
+        if (b.isStadium() && poke(b,t).contains("PreTransformPoke")) {
+            fturn(b,s).add(TM::Failed);
+            return;
+        }
     }
 
     static void uas(int s, int t, BS &b) {

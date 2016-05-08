@@ -48,6 +48,7 @@ DamageCalc::DamageCalc(int gen, QWidget *parent) :
 
     foreach (QSpinBox *w, mine) {
         connect(w, SIGNAL(valueChanged(int)), this, SLOT(updateMyPokeStats()));
+        connect(w, SIGNAL(valueChanged(int)), this, SLOT(updateMoveInfo()));
     }
 
     QList<QSpinBox *> opps;
@@ -60,6 +61,7 @@ DamageCalc::DamageCalc(int gen, QWidget *parent) :
 
     foreach (QSpinBox *w, opps) {
         connect(w, SIGNAL(valueChanged(int)), this, SLOT(updateOPokeStats()));
+        connect(w, SIGNAL(valueChanged(int)), this, SLOT(updateMoveInfo()));
     }
 
     connect(ui->mypoke, SIGNAL(currentIndexChanged(int)), this, SLOT(updateMyPoke()));
@@ -73,6 +75,15 @@ DamageCalc::DamageCalc(int gen, QWidget *parent) :
 
     connect(ui->mygender, SIGNAL(currentIndexChanged(int)), this, SLOT(updateMyPokePic()));
     connect(ui->ogender, SIGNAL(currentIndexChanged(int)), this, SLOT(updateOPokePic()));
+
+    // Update move info after every change to automatically calculate BP
+    // for moves that have varying BP
+    connect(ui->mypoke, SIGNAL(currentIndexChanged(int)), this, SLOT(updateMoveInfo()));
+    connect(ui->opoke, SIGNAL(currentIndexChanged(int)), this, SLOT(updateMoveInfo()));
+    connect(ui->mynature, SIGNAL(currentIndexChanged(int)), this, SLOT(updateMoveInfo()));
+    connect(ui->onature, SIGNAL(currentIndexChanged(int)), this, SLOT(updateMoveInfo()));
+    connect(ui->mylevel, SIGNAL(valueChanged(int)), this, SLOT(updateMoveInfo()));
+    connect(ui->olevel, SIGNAL(valueChanged(int)), this, SLOT(updateMoveInfo()));
 
     connect(ui->calculate, SIGNAL(clicked()), this, SLOT(calculate()));
 }
@@ -251,6 +262,7 @@ void DamageCalc::setupCalc(int gen)
     ui->friendguard->setVisible(gen > 4);
     ui ->wonderroom->setVisible(gen > 4);
     ui->allyfainted->setVisible(gen > 4);
+    ui->multitarget->setVisible(gen > 2);
 
     updateMyPoke();
     updateOPoke();
@@ -281,12 +293,12 @@ void DamageCalc::updateMyPokeStats()
     spdef = PokemonInfo::BoostedStat(spdef, ui->myspdefboost->value());
     spd = PokemonInfo::BoostedStat(spd, ui->myspdboost->value());
 
-    ui->myhpstat->setText(QString::number(hp));
-    ui->myatkstat->setText(QString::number(atk));
-    ui->mydefstat->setText(QString::number(def));
-    ui->myspatkstat->setText(QString::number(spatk));
-    ui->myspdefstat->setText(QString::number(spdef));
-    ui->myspdstat->setText(QString::number(spd));
+    ui->myhpstat->setNum(hp);
+    ui->myatkstat->setNum(atk);
+    ui->mydefstat->setNum(def);
+    ui->myspatkstat->setNum(spatk);
+    ui->myspdefstat->setNum(spdef);
+    ui->myspdstat->setNum(spd);
 }
 
 void DamageCalc::updateOPokeStats()
@@ -307,18 +319,78 @@ void DamageCalc::updateOPokeStats()
     spdef = PokemonInfo::BoostedStat(spdef, ui->ospdefboost->value());
     spd = PokemonInfo::BoostedStat(spd, ui->ospdboost->value());
 
-    ui->ohpstat->setText(QString::number(hp));
-    ui->oatkstat->setText(QString::number(atk));
-    ui->odefstat->setText(QString::number(def));
-    ui->ospatkstat->setText(QString::number(spatk));
-    ui->ospdefstat->setText(QString::number(spdef));
-    ui->ospdstat->setText(QString::number(spd));
+    ui->ohpstat->setNum(hp);
+    ui->oatkstat->setNum(atk);
+    ui->odefstat->setNum(def);
+    ui->ospatkstat->setNum(spatk);
+    ui->ospdefstat->setNum(spdef);
+    ui->ospdstat->setNum(spd);
 }
 
 void DamageCalc::updateMoveInfo()
 {
     int move = MoveInfo::Number(ui->move->currentText());
     int bp = MoveInfo::Power(move, m_currentGen);
+    Pokemon::uniqueId mypokenumber = PokemonInfo::Number(ui->mypoke->currentText());
+    Pokemon::uniqueId opokenumber = PokemonInfo::Number(ui->opoke->currentText());
+    if (move == Move::Frustration || move == Move::Return) {
+        bp = 102; // Automatically set max possible BP
+    }
+
+    else if (move == Move::GyroBall) {
+        bp = 25 * ((ui->ospdstat->text()).toInt() / (ui->myspdstat->text()).toInt());
+        if (bp > 150) {
+            bp = 150;
+        } else if (bp == 0) {
+            bp = 1;
+        }
+    } else if (move == Move::WringOut || move == Move::CrushGrip) {
+        int omaxhp = PokemonInfo::FullStat(PokemonInfo::Number(ui->opoke->currentText()), m_currentGen, NatureInfo::Number(ui->onature->currentText()), 0, ui->olevel->value(), ui->ohpiv->value(), ui->ohpev->value());
+        bp = 1 + 120 * ui->ohpstat->text().toInt() / omaxhp;
+        if (bp > 121) {
+            bp = 121;
+        }
+    }
+
+    if (move == Move::GrassKnot || (move == Move::LowKick && m_currentGen.num != 1)) {
+        int weight = PokemonInfo::Weight(opokenumber);
+        if (weight < 100) {
+            bp = 20;
+        } else if (weight < 250) {
+            bp = 40;
+        } else if (weight < 500) {
+            bp = 60;
+        } else if (weight < 1000) {
+            bp = 80;
+        } else if (weight < 2000) {
+            bp = 100;
+        } else {
+            bp = 120;
+        }
+    }
+
+    if (move == Move::HeavySlam || move == Move::HeatCrash) {
+        int myweight = PokemonInfo::Weight(mypokenumber);
+        int oweight = PokemonInfo::Weight(opokenumber);
+        int ratio = 0;
+        // Missingno's weight is 0 and dividing by 0 is bad!
+        if (opokenumber != 0){
+            ratio = myweight / oweight;
+        }
+
+        if (ratio >= 5) {
+            bp = 120;
+        } else if (ratio == 4) {
+            bp = 100;
+        } else if (ratio == 3) {
+            bp = 80;
+        } else if (ratio == 2) {
+            bp = 60;
+        } else {
+            bp = 40;
+        }
+    }
+
     int type = MoveInfo::Type(move, m_currentGen);
     int category = MoveInfo::Category(move, m_currentGen);
 
@@ -450,7 +522,7 @@ void DamageCalc::calculate()
             myboosts.append(myboost->value());
         } else if (i == 0) {
             mystat = mystat * ui->myhppercent->value() / 100;
-            oboosts.append(0);
+            myboosts.append(0);
         }
 
         mystats.append(mystat);
