@@ -125,6 +125,9 @@ struct RBYBide : public MM
 
         inc(poke(b,s)["BideDamage"], poke(b,t).value("DamageInflicted").toInt());
         if (count > 0) {
+            if (b.isStadium()) {
+                b.battleMemory()["LastDamageTakenByAny"] = 0;
+            }
             b.sendMoveMessage(9, 0, s);
         } else {
             int damage = poke(b,s)["BideDamage"].toInt();
@@ -726,7 +729,11 @@ struct RBYMimic : public MM
             move = b.move(t, b.randint(4));
         }
         int slot = fpoke(b,s).lastMoveSlot;
+        int oldpp = b.PP(s, slot);
         b.changeTempMove(s, slot, move);
+        if (b.isStadium()) {
+            b.changePP(s, slot, oldpp);
+        }
         b.sendMoveMessage(81,0,s,type(b,s),t,move);
     }
 };
@@ -911,6 +918,9 @@ struct RBYRazorWind : public MM
         tmove(b, s).power = 0;
         tmove(b, s).status = Pokemon::Fine;
         tmove(b, s).targets = Move::User;
+        if (b.isStadium()) {
+            b.battleMemory()["LastDamageTakenByAny"] = 0;
+        }
         addFunction(poke(b,s), "TurnSettings", "RazorWind", &ts);
     }
 
@@ -983,6 +993,7 @@ struct RBYConversion : public MM
     }
 
     static void uas(int s, int t, BS &b) {
+        b.sendMoveMessage(172,0,s,type(b,s),t);
         fpoke(b,s).type1 = fpoke(b,t).type1;
         fpoke(b,s).type2 = fpoke(b,t).type2;
         fpoke(b,s).types = fpoke(b,t).types;
